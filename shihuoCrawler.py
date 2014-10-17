@@ -4,20 +4,34 @@ from sgmllib import SGMLParser
 import urllib
 import os
 
-def CrawlOnePage(page, buyWhat):
-    ##'''http://www.shihuo.cn/1?w=篮球鞋'''
-    if page <= 0:
-        page = 1
-    #urllib.quote: translate Chinese characters into coded characters
-    #pageurl = 'http://www.shihuo.cn'
-    pageurl = 'http://www.shihuo.cn/' + unicode(page) + '?w=' + urllib.quote(buyWhat)
-#    print pageurl
+class bargainCrawler():
 
-    rh = requests.get(pageurl)
+    def __init__(self, site):
+        if site.lower() == "shihuo":
+            self.pageurl = 'http://www.shihuo.cn/'
+        elif site.lower == "smzdm":
+            self.pageurl = 'http://www.smzdm.com/'
+        else:
+            self.pageurl = ""
 
-    if rh.status_code == requests.codes.ok:
-        return rh.content  ##返回raw的网页编码
+        self.page_content = ""
+
+    def CrawlOnePage(self, page, buyWhat):
+        ##'''http://www.shihuo.cn/1?w=篮球鞋'''
+        if page <= 0:
+            page = 1
+        #urllib.quote: translate Chinese characters into coded characters
+        #pageurl = 'http://www.shihuo.cn'
+        self.pageurl = self.pageurl + unicode(page) + '?w=' + urllib.quote(buyWhat)
+#        print self.pageurl
+
+        rh = requests.get(self.pageurl)
+
+        if rh.status_code == requests.codes.ok:
+            self.page_content = rh.content ##返回raw的网页编码
+        #return rh.content  ##返回raw的网页编码
         ##rh.text ##会对原始网页代码的编码进行猜测
+    
 
 class shihuoParser(SGMLParser):
     def reset(self):
@@ -197,10 +211,10 @@ class shihuoParser(SGMLParser):
             os.mkdir(filedir)
         
         for item in self.itemList:
-##输出itemList信息用于测试
-#            print 'item len:' + str(len(item))
-#            for i in item:
-#                print i
+#输出itemList信息用于测试
+            print 'item len:' + str(len(item))
+            for i in item:
+                print i
             pic_url = item[-1]
             filename = pic_url.split('/')[-1]
             temppath = filedir + '/'+ filename
@@ -209,9 +223,10 @@ class shihuoParser(SGMLParser):
             
 
 if __name__ == '__main__':
-    page_content = CrawlOnePage(1,'篮球鞋')
+    my_shihuoCrawler = bargainCrawler("shihuo")
+    my_shihuoCrawler.CrawlOnePage(1,'篮球鞋')
     #print page_content
     my_shihuoParser = shihuoParser()
-    my_shihuoParser.feed(page_content)
+    my_shihuoParser.feed(my_shihuoCrawler.page_content)
 #    my_shihuoParser.printID()
     my_shihuoParser.DownloadItemPic()
