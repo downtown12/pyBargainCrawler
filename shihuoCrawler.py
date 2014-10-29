@@ -1,216 +1,156 @@
 #coding=utf-8
 import requests
-from sgmllib import SGMLParser
+import threading
 import urllib
-import os
+import time
+import copy
+from parsers import shihuoParser, smzdmParser
+from datetime import datetime
 
 class bargainCrawler():
 
     def __init__(self, site):
-        if site.lower() == "shihuo":
-            self.pageurl = 'http://www.shihuo.cn/'
-        elif site.lower == "smzdm":
-            self.pageurl = 'http://www.smzdm.com/'
-        else:
-            self.pageurl = ""
+        self.site = site.lower()
 
         self.page_content = ""
+        self.myParser = self.SetParser(self.site)
+        
+        self.storedItemList = []
+        self.itemTimeRecorder = datetime.min
 
-    def CrawlOnePage(self, page, buyWhat):
+    def FetchCurrentItems(self, buyWhat, startPage=1, pagesNum=10, days=7):
+            for i in range(startPage,startPage + pagesNum):
+                self.CrawlOnePage(buyWhat, i)
+                isOutdated = self.ParseOnePage(days)
+                if isOutdated:
+                    return isOutdated
+            
+            return isOutdated
+
+        
+
+    def CrawlOnePage(self, buyWhat, page=1 ):
         ##'''http://www.shihuo.cn/1?w=篮球鞋'''
         if page <= 0:
             page = 1
         #urllib.quote: translate Chinese characters into coded characters
         #pageurl = 'http://www.shihuo.cn'
-        self.pageurl = self.pageurl + unicode(page) + '?w=' + urllib.quote(buyWhat)
-#        print self.pageurl
+        if self.site =='shihuo':
+            self.pageurl = 'http://www.shihuo.cn/' + unicode(page) + '?w=' + urllib.quote(buyWhat)
+        elif self.site == 'smzdm':
+            self.pageurl = 'http://www.smzdm.com/' + unicode(page) + '?w=' + urllib.quote(buyWhat)
+        else:
+            self.pageurl = ""
 
         rh = requests.get(self.pageurl)
 
         if rh.status_code == requests.codes.ok:
-            self.page_content = rh.content ##返回raw的网页编码
+            #替换HTML中的单引号字符（转移字符是&#039） 和双引号字符（&quot）, 避免在parse的时候出错
+#            #TODO: improve these ugly lines below
+            self.page_content = rh.content  ##返回raw的网页编码
+#            self.page_content = rh.content.replace(r'&#039',"'") ##返回raw的网页编码
+#            self.page_content = self.page_content.replace(r'&quot;','"') ##返回raw的网页编码
         #return rh.content  ##返回raw的网页编码
-        ##rh.text ##会对原始网页代码的编码进行猜测
+#            self.page_content = rh.text
+#            return rh.text ##会对原始网页代码的编码进行猜测
     
-
-class shihuoParser(SGMLParser):
-    def reset(self):
-            #itemList: 
-            self.itemList = []
-            self.aItem = []
-            self.in_body_flag = False
-            self.index_item_flag = False
-            self.item_hd_flag = False
-            self.in_h2_flag = False
-            self.in_a_flag = False
-            self.shihuo_buy_link_flag = False
-            self.in_p_pic_flag = False
-            self.in_p_pic_a_flag = False
-            self.in_img_flag = False
-            self.getdata = False
-            self.verbatim = 0
-            self.sub_div = 0
-            SGMLParser.reset(self)
-                                
-#    def start_body(self, attrs):
-#        if self.in_body_flag == True:
-#                self.verbatim +=1 ##进入子层body了，层数加1
-#            return
-#        self.in_body_flag = True
-#        return
-#
-#    def end_body(self):##遇到</div>
-#        if self.verbatim == 0:
-#            self.in_body_flag = False
-#            return
-#        if self.in_body_flag == True:
-#            self.verbatim -=1
-#            return
-
-    def start_div(self, attrs):
-
-        for k,v in attrs:##遍历div的所有属性以及其值
-            if k == 'class' and 'shihuo-index-item' in v and v!="shihuo-index-item-text" :
-                ##确定进入了<div class='shiuho-index-item  '>, 注意值最后的2个空格
-                self.index_item_flag = True
-                #print 'into div class="shihuo-index-item "'
-                return
+    def SetParser(self, site):
+        if site == "shihuo":
+            return shihuoParser()
+        else: 
+            return smzdmParser() 
             
-            if self.index_item_flag == True and k == 'class' and v == 'item-hd':
-                self.item_hd_flag = True
-                return
-            
-            if self.index_item_flag == True and k == 'class' and v == 'shihuo-buy-link':
-                self.shihuo_buy_link_flag = True
-                return
-            
-        if self.index_item_flag == True:
-            self.sub_div += 1
-            return
-
-            #if k == 'class' and v == ''
+    def GetParser(self):
+        return self.myParser
     
-    def end_div(self):
-        #There is no <div>s embeded in this flag, so just assign it with false
-        if self.item_hd_flag == True:
-            self.item_hd_flag = False
-            return
+    #Parse the content of a crawled page.
+    def ParseOnePage(self, limitDays = 7):
+        self.myParser.feed(self.page_content)
+        isItemRemoved = self.KeepItemRecent(limitDays)
+#        self.PrintItemList(isSimplePrint = False)
         
-        #There is no <div>s embeded in this flag, so just assign it with false
-        if self.shihuo_buy_link_flag == True:
-            self.shihuo_buy_link_flag = False
-            return
-                        
-        if self.sub_div ==0 and self.item_hd_flag == False:
-            self.index_item_flag = False
-#            print 'out from div class="shihuo-index-item "'
+        return isItemRemoved
 
-            """
-            now we are out from div class="shihuo-index-item "
-            so now we add the complete item to itemList
-            """
-            
-            #do not append it if there is no item.
-            if len(self.aItem) == 0:
-                return
-            
-            self.itemList.append(self.aItem)
-            #now we reset the aItem for the next one.
-            self.aItem = []
-            return
-            
-        if self.index_item_flag == True:
-            self.sub_div -=1
-            return
-            
-    def start_h2(self,attrs):
-        if self.item_hd_flag == False:
-            return
-        self.in_h2_flag = True
-    def end_h2(self):
-        if self.in_h2_flag:
-            self.in_h2_flag = False
-            
-#    def start_a(self, attrs):
-#        if self.in_h2_flag:
-#            self.in_h2_a_flag = True
-#        elif self.in_p_pic_flag:
-#            self.in_p_pic_a_flag = True
-#            for k, v in attrs:
-#                if k == 'href':
-#                    #here v is the buy link!!!
-#                    print v
-#        else: return
-#        
-#    def end_a(self):
-#        if self.in_a_flag:
-#            self.in_a_flag = False
-#        elif self.in_p_pic_a_flag:
-#            self.in_p_pic_a_flag = False
+    def PrintItemList(self,isSimplePrint = True):
+        self.myParser.printItems(isSimplePrint)
 
-    def start_p(self, attrs):
-        ##make sure we are in shihuo-buy-link ( of shihuo-index-item )
-        if self.shihuo_buy_link_flag == False:
+    def UpdateStoredItemList(self):
+        itemList = self.myParser.GetItemList()
+        self.storedItemList = self.storedItemList + copy.deepcopy(itemList)
+    
+    def UpdateItemTimeRecorder(self):
+        try:
+            itemTime = datetime.strptime(self.myParser.GetItemList()[0][-3],'%m月%d日 %H:%M')
+        except IndexError:
             return
-        
-        for k,v in attrs:##遍历p的所有属性以及其值
-            if k == 'class' and v == 'pic' :
-                ##确定进入了<p class='pic'>
-                self.in_p_pic_flag = True
-                #print 'into div class="shihuo-index-item "'
+        except:
+            return False
+        self.itemTimeRecorder = itemTime
+
+
+    # TODO: IsItemCollected未引入“年”可能导致一种逻辑Bug：
+    #      TimeRecorder日期是12月31日（2014年），newItem的日期是1月1日（2015），
+    #      则原本是fresh的这个newItem不会被收录
+    #
+    #解决此问题：
+    #1. 解决思路： 
+    #   对收录到的item的时间项进行加“年”的修正
+    #
+    #2. itemList中的item遵守的时间准则:
+    #   排在前边的item的收录时间一定晚于（或等于）排在后边的item的收录时间
+    #    
+    #3. 需要考虑的问题：
+    #   a. 新年伊始，Crawl的第一个项目是去年的（如何记录？）
+    #   b. 新年伊始，Crawl的中间某个项目或最后一个项目是去年的，之后的项目是今年的（）
+    #
+    #若已完成了这里，成员函数KeepRecentItemOnly中的itemDate变量的赋值一行也要修改
+    #
+    #IsItemUncollected: Return True if the newItem has not been collected
+    def IsItemUncollected(self, newItemTime, timeRecorder):
+        if newItemTime > timeRecorder:
+            return True
+        else:
+            return False
+            
+    #由于商品具有时效性，因此只保留最近days天以来发布的商品
+    #Return: True if some items in itemList should be removed. False if not.
+    def KeepItemRecent(self, limitDays = 7):
+        isRemoved = False
+        nowDate = datetime.today()
+        itemList = self.myParser.GetItemList()
+        reverseItemIndexs = range(len(self.myParser.GetItemList()))[::-1]
+        for i in reverseItemIndexs:
+            item = itemList[i]
+            #itemDate只有月和日的数据,需要修正itemDate的年数据
+            itemDate = datetime.strptime(str(nowDate.year) + '年' + item[2], '%Y年%m月%d日 %H:%M')
+            if (nowDate - itemDate).days > limitDays:
+                del itemList[i] #??am I writting right?
+                isRemoved = True
+            else:
+                return isRemoved
+
+        return isRemoved
+    
+    
+    #KeepItemUncollected: Only keep the uncollected items in the itemList.
+    def KeepItemUncollected(self):
+        itemList = self.myParser.GetItemList()
+        reverseItemIndexs = range(len(self.myParser.GetItemList()))[::-1]
+        for i in reverseItemIndexs:
+            item = itemList[i]
+            itemDate = datetime.strptime(item[2], '%m月%d日 %H:%M')
+            if self.IsItemUncollected(itemDate, self.itemTimeRecorder):
                 return
-    
-    def end_p(self):
-        if self.in_p_pic_flag:
-            self.in_p_pic_flag = False
-    
-    ##注意上面也有一个start_a函数
-    def start_a(self, attrs):
-        if self.in_p_pic_flag == False:
-            return
-        self.in_p_pic_a_flag = True
-        for k, v in attrs:
-            if k == 'href':
-                #here v is the buy link!!!
-                self.aItem.append(v)
-                #print v
-    
-    def end_a(self):
-        if self.in_p_pic_a_flag:
-            self.in_p_pic_a_flag = False
-    
-    def start_img(self, attrs):
-        if self.in_p_pic_a_flag == False:
-            return
-        self.in_img_flag = True
-        for k, v in attrs:
-            if k == 'src':
-                #here v is the item's picture                
-                self.aItem.append(v)
-                #print v
-                #This is the last element in a item
-    
-    def end_img(self):
-        if self.in_img_flag:
-            self.in_img_flag = False
-    
-    def handle_data(self, text):##处理文本
-#        if self.in_a_flag:
-        if self.in_h2_flag:
-            if not text.strip() == '':
-                self.aItem.append(text)
-#                print text ##有用的文本
-    
-    def printID(self):
-        for i in self.itemList:
-            print i
-    
-    def DownloadItemPic(self):
+            else:
+                del itemList[i]
+            
+
+    def DownloadItemPic(self, itemList):
         filedir = 'temppics'
         if not os.path.exists(filedir):
             os.mkdir(filedir)
         
-        for item in self.itemList:
+        for item in itemList:
 #输出itemList信息用于测试
             print 'item len:' + str(len(item))
             for i in item:
@@ -220,13 +160,30 @@ class shihuoParser(SGMLParser):
             temppath = filedir + '/'+ filename
             
             urllib.urlretrieve(pic_url, temppath)
-            
+
+#def RunCrawler():
+#	pass
 
 if __name__ == '__main__':
+    crawlInterval = 5 
+    buyWhat = '篮球鞋'
     my_shihuoCrawler = bargainCrawler("shihuo")
-    my_shihuoCrawler.CrawlOnePage(1,'篮球鞋')
-    #print page_content
-    my_shihuoParser = shihuoParser()
-    my_shihuoParser.feed(my_shihuoCrawler.page_content)
-#    my_shihuoParser.printID()
-    my_shihuoParser.DownloadItemPic()
+
+#    my_shihuoCrawler.CrawlOnePage(buyWhat, 4)
+#    my_shihuoCrawler.ParseOnePage()
+    my_shihuoCrawler.FetchCurrentItems(buyWhat, startPage=1, pagesNum=10, days=7)
+    my_shihuoCrawler.UpdateStoredItemList()
+    my_shihuoCrawler.UpdateItemTimeRecorder()
+    my_shihuoCrawler.PrintItemList()
+    my_shihuoCrawler.GetParser().CleanItemList()
+
+    while True:
+        my_shihuoCrawler.CrawlOnePage(buyWhat, 1)
+        my_shihuoCrawler.ParseOnePage()
+        my_shihuoCrawler.KeepItemUncollected()
+        my_shihuoCrawler.UpdateStoredItemList()
+        my_shihuoCrawler.UpdateItemTimeRecorder()
+        my_shihuoCrawler.PrintItemList()
+        my_shihuoCrawler.GetParser().CleanItemList()
+	    #my_shihuoParser.DownloadItemPic()
+        time.sleep(crawlInterval)
